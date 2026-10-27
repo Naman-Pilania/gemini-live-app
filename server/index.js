@@ -2,15 +2,7 @@ import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
 import { WebSocketServer, WebSocket } from "ws";
-import twilio from "twilio";
-
-const {
-  GEMINI_API_KEY,
-  TWILIO_ACCOUNT_SID: SID,
-  TWILIO_AUTH_TOKEN: TOKEN,
-  TWILIO_NUMBER,
-  PUBLIC_URL,
-} = process.env;
+import { addCallRoute, twilioWss } from "./twilio.js";
 
 const PORT = process.env.PORT || 3001;
 const KEY = process.env.GEMINI_API_KEY;
@@ -27,10 +19,21 @@ Call ending rules: When the caller's request is fully handled, or they say goodb
 console.log("🚀 ~ GEMINI_URL:", GEMINI_URL);
 
 const app = express();
+app.use(express.json());
+addCallRoute(app);
 app.get("/health", (_req, res) => res.json({ ok: true, keyConfigured: !!KEY }));
 
 const server = createServer(app);
-const wss = new WebSocketServer({ server, path: "/live" });
+const wss = new WebSocketServer({ noServer: true });
+server.on("upgrade", (req, socket, head) => {
+  const { pathname } = new URL(req.url, "http://x");
+  const target =
+    pathname === "/live" ? wss : pathname === "/twilio" ? twilioWss : null;
+  if (!target) return socket.destroy();
+  target.handleUpgrade(req, socket, head, (ws) =>
+    target.emit("connection", ws, req),
+  );
+});
 
 // Browser <-> this server <-> Gemini Live. The API key never reaches the browser.
 wss.on("connection", (client) => {
